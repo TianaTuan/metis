@@ -99,10 +99,11 @@ def _post_process_reviews(
     return normalized_reviews
 
 
-def review_node_retrieve(state: ReviewState) -> ReviewState:
+def review_node_retrieve(state: ReviewState, similarity_top_k: int = 5, min_retrieval_score: float = None) -> ReviewState:
     cp = state.get("context_prompt", "")
-    code = retrieve_text(state["retriever_code"], cp)
-    docs = retrieve_text(state["retriever_docs"], cp)
+    # Use similarity_top_k as max_docs limit, and optional min_retrieval_score for filtering
+    code = retrieve_text(state["retriever_code"], cp, min_score=min_retrieval_score, max_docs=similarity_top_k)
+    docs = retrieve_text(state["retriever_docs"], cp, min_score=min_retrieval_score, max_docs=similarity_top_k)
     context = synthesize_context(code, docs)
     new_state: ReviewState = dict(state)
     new_state["context"] = context
@@ -230,14 +231,18 @@ class ReviewGraph:
             return None
         return prompt | structured_model
 
-    def _build_app(self, language_prompts, default_prompt_key):
-        cache_key = (id(language_prompts), default_prompt_key)
+    def _build_app(self, language_prompts, default_prompt_key, similarity_top_k=5, min_retrieval_score=None):
+        cache_key = (id(language_prompts), default_prompt_key, similarity_top_k, min_retrieval_score)
         cached = self._app_cache.get(cache_key)
         if cached is not None:
             return cached
 
         graph = StateGraph(ReviewState)
-        retrieve = review_node_retrieve
+        retrieve = partial(
+            review_node_retrieve,
+            similarity_top_k=similarity_top_k,
+            min_retrieval_score=min_retrieval_score,
+        )
         build_prompt = partial(
             review_node_build_prompt,
             language_prompts=language_prompts,
@@ -269,7 +274,7 @@ class ReviewGraph:
         self._app_cache[cache_key] = compiled
         return compiled
 
-    def review(self, request: ReviewRequest):
+    def review(self, request: ReviewRequest, similarity_top_k=5, min_retrieval_score=None):
         file_path = request["file_path"]
         snippet = request["snippet"]
         retriever_code = request["retriever_code"]
@@ -283,7 +288,7 @@ class ReviewGraph:
 
         chunks = split_snippet(snippet, self.max_token_length)
         accumulated = []
-        app = self._build_app(language_prompts, default_prompt_key)
+        app = self._build_app(language_prompts, default_prompt_key, similarity_top_k, min_retrieval_score)
         for chunk in chunks:
             state = {
                 "file_path": file_path,

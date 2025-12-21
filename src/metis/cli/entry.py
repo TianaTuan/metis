@@ -30,6 +30,7 @@ from .commands import (
     run_file_review,
     run_review_code,
     run_update,
+    run_report,
     show_help,
     show_version,
 )
@@ -54,6 +55,7 @@ COMMANDS = {
     "update": run_update,
     "review_file": run_file_review,
     "ask": run_ask,
+    "report": run_report,
     "help": show_help,
     "version": show_version,
     "exit": None,
@@ -82,7 +84,10 @@ def determine_output_file(cmd, args, cmd_args):
 
     Path("results").mkdir(exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    args.output_file = [f"results/{cmd}_{timestamp}.json"]
+    if cmd == "report":
+        args.output_file = [f"results/{cmd}_{timestamp}.html"]
+    else:
+        args.output_file = [f"results/{cmd}_{timestamp}.json"]
 
 
 def execute_command(engine, cmd, cmd_args, args):
@@ -112,6 +117,8 @@ def execute_command(engine, cmd, cmd_args, args):
     elif cmd == "index":
         func(engine, args.verbose, args.quiet)
     elif cmd == "review_code":
+        func(engine, args)
+    elif cmd == "report":
         func(engine, args)
 
 
@@ -157,6 +164,18 @@ def main():
         "--command",
         type=str,
         help="Command to run in non-interactive mode (e.g., 'review_patch file.patch')",
+    )
+    parser.add_argument(
+        "--min-confidence",
+        type=float,
+        default=0.0,
+        help="Minimum confidence threshold (0.0-1.0) to filter issues (default: 0.0)",
+    )
+    parser.add_argument(
+        "--severity-filter",
+        nargs="+",
+        choices=["Critical", "High", "Medium", "Low"],
+        help="Filter issues by severity level(s) (e.g., --severity-filter High Critical)",
     )
 
     args = parser.parse_args()

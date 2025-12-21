@@ -19,7 +19,6 @@ def load_yaml(path):
 
 def load_runtime_config(config_path=None, enable_psql=False):
     cfg = load_metis_config(config_path)
-
     runtime: dict[str, object] = {}
     if enable_psql:
         db_cfg = cfg.get("psql_database", {})
@@ -65,6 +64,8 @@ def load_runtime_config(config_path=None, enable_psql=False):
             )
         runtime["llm_api_key"] = llm_api_key
         runtime["model"] = llm_cfg.get("model", "")
+        runtime["openai_api_base"] = llm_cfg.get("base_url", "")
+
     elif llm_provider_name == "azure_openai":
         llm_api_key = os.environ.get("AZURE_OPENAI_API_KEY")
         if not llm_api_key:
@@ -135,6 +136,7 @@ def load_runtime_config(config_path=None, enable_psql=False):
     runtime["llama_query_max_tokens"] = query_cfg.get("max_tokens", 500)
     runtime["similarity_top_k"] = query_cfg.get("similarity_top_k", 5)
     runtime["response_mode"] = query_cfg.get("response_mode", "compact")
+    runtime["min_retrieval_score"] = query_cfg.get("min_retrieval_score")  # Optional: minimum relevance score for retrieval
 
     return runtime
 

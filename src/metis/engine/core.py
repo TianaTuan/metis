@@ -93,6 +93,10 @@ class MetisEngine:
         self._review_graph = None
         self._ask_graph = None
         self.metisignore_file = kwargs.get("metisignore_file") or ".metisignore"
+        # Retrieval optimization parameters
+        self.min_retrieval_score = kwargs.get("min_retrieval_score")
+        # Retrieval optimization parameters
+        self.min_retrieval_score = kwargs.get("min_retrieval_score")
 
     def load_metisignore(self):
         """
@@ -332,7 +336,8 @@ class MetisEngine:
                 "relative_file": relative_path,
                 "mode": "file",
             }
-            return self._get_review_graph().review(req)
+            graph = self._get_review_graph()
+            return graph.review(req, similarity_top_k=self.similarity_top_k, min_retrieval_score=self.min_retrieval_score)
         except Exception as e:
             logger.error(f"Error processing file {file_path}: {e}")
             return None
@@ -429,7 +434,8 @@ class MetisEngine:
                     "mode": "patch",
                     "original_file": original_content or "",
                 }
-                review_dict = self._get_review_graph().review(req)
+                graph = self._get_review_graph()
+                review_dict = graph.review(req, similarity_top_k=self.similarity_top_k, min_retrieval_score=self.min_retrieval_score)
             except Exception as e:
                 logger.error(f"Error processing review for {file_diff.path}: {e}")
                 review_dict = None

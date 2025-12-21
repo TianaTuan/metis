@@ -28,3 +28,6 @@ query:
   response_mode: "tree_summarize"
   max_tokens: 5000
   temperature: 0.0
+  # Optional: Minimum relevance score (0.0-1.0) for filtering retrieved context
+  # Only documents with similarity score >= min_retrieval_score will be used
+  # min_retrieval_score: 0.7

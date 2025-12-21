@@ -94,19 +94,41 @@ def generate_sarif(
         for issue in review.get("reviews", []):
             text = issue.get("issue", "unspecified")
             raw_line = issue.get("line_number", 1)
-            line_num = max(1, min(raw_line, total_lines or 1))
+            
+            # Handle line number range (e.g., "109-115") or single line number
+            if isinstance(raw_line, str) and "-" in raw_line:
+                try:
+                    start_str, end_str = raw_line.split("-", 1)
+                    start_line = max(1, min(int(start_str), total_lines or 1))
+                    end_line = max(1, min(int(end_str), total_lines or 1))
+                    line_num = start_line  # Use start line for context calculation
+                except (ValueError, AttributeError):
+                    # Fallback if parsing fails
+                    start_line = max(1, min(int(raw_line) if str(raw_line).isdigit() else 1, total_lines or 1))
+                    end_line = start_line
+                    line_num = start_line
+            else:
+                # Single line number (int or string that's a number)
+                try:
+                    line_num = max(1, min(int(raw_line), total_lines or 1))
+                    start_line = line_num
+                    end_line = line_num
+                except (ValueError, TypeError):
+                    line_num = 1
+                    start_line = 1
+                    end_line = 1
 
             fingerprint = create_fingerprint(
-                file_path or artifact_uri, line_num, RULES[0]["id"]
+                file_path or artifact_uri, start_line, RULES[0]["id"]
             )
 
             # Calculate context window
-            start = max(1, line_num - context_lines)
-            end = min(line_num + context_lines, total_lines)
+            start = max(1, start_line - context_lines)
+            end = min(end_line + context_lines, total_lines)
             block = lines[start - 1 : end]
 
             # Extract snippet and full context
-            idx = line_num - start
+            idx = start_line - start
             snippet = (
                 block[idx].strip() if 0 <= idx < len(block) else "<source unavailable>"
             )
@@ -122,6 +144,14 @@ def generate_sarif(
             if isinstance(severity, str) and severity.strip():
                 properties["severity"] = severity.strip()
 
+            # Build region with optional endLine
+            region = {
+                "startLine": start_line,
+                "snippet": {"text": snippet},
+            }
+            if end_line > start_line:
+                region["endLine"] = end_line
+
             run["results"].append(
                 {
                     "ruleId": RULES[0]["id"],
@@ -135,10 +165,7 @@ def generate_sarif(
                         {
                             "physicalLocation": {
                                 "artifactLocation": {"uri": artifact_uri},
-                                "region": {
-                                    "startLine": start,
-                                    "snippet": {"text": snippet},
-                                },
+                                "region": region,
                                 "contextRegion": {
                                     "startLine": start,
                                     "endLine": end,

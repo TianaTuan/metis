@@ -1,0 +1,37 @@
+metis_engine:
+  max_token_length: 250000
+  max_workers: 10
+  embed_dim: 3072
+  hnsw_kwargs:
+    hnsw_m: 16
+    hnsw_ef_construction: 64
+    hnsw_ef_search: 40
+    hnsw_dist_method: "vector_cosine_ops"
+
+llm_provider:
+  # 使用 OpenAI (需要设置 OPENAI_API_KEY 环境变量)
+  # name: "openai"
+  # model: "gpt-4o-mini"
+  # code_embedding_model: "text-embedding-3-small"
+  # docs_embedding_model: "text-embedding-3-small"
+  
+  # 使用 Gemini (需要设置 GOOGLE_API_KEY 环境变量，并安装: uv pip install '.[gemini]')
+  # name: "gemini"
+  # model: "gemini-1.5-pro"
+  # code_embedding_model: "models/embedding-001"
+  # docs_embedding_model: "models/embedding-001"
+  # context_window: 8192
+
+  ## qwen
+  name: "openai"
+  base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+  model: "qwen-max"
+  code_embedding_model: "text-embedding-v1"
+  docs_embedding_model: "text-embedding-v1"
+
+query:
+  similarity_top_k: 5
+  response_mode: "tree_summarize"
+  max_tokens: 5000
+  temperature: 0.0
+

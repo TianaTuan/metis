@@ -87,29 +87,100 @@ def normalize_lines(lines):
     return re.sub(r"\s+", "", joined)
 
 
+def normalize_lines_preserve_structure(lines):
+    """Normalize lines while preserving basic structure (newlines, indentation patterns)."""
+    # Remove trailing whitespace but keep leading whitespace and newlines
+    normalized = []
+    for line in lines:
+        # Keep the line structure but normalize multiple spaces to single space
+        normalized_line = re.sub(r"[ \t]+", " ", line.rstrip())
+        normalized.append(normalized_line)
+    return "\n".join(normalized)
+
+
+def extract_key_tokens(text):
+    """Extract key tokens (identifiers, keywords, operators) from code."""
+    # Extract words, operators, and special characters
+    tokens = re.findall(r'\b\w+\b|[+\-*/=<>!&|{}();,\[\]]+', text)
+    return [t for t in tokens if len(t) > 1 or t in '{}()[];=<>!&|+-*/']
+
+
 def find_snippet_line(snippet, file_lines, threshold=0.80):
     """
-    Finds the first line number where the snippet matches a window in the file
-    above the given similarity threshold. Returns 1 if not found.
+    Finds the line number range where the snippet matches a window in the file
+    using multiple matching strategies for better accuracy.
+    Returns (start_line, end_line) tuple. If not found, returns (1, 1).
     Expects caller to provide file_lines to avoid redundant I/O.
     """
     if not file_lines:
-        return 1
+        return (1, 1)
 
     snippet_lines = snippet.strip().splitlines()
     snippet_len = len(snippet_lines)
+    if snippet_len == 0:
+        return (1, 1)
+    
+    # Strategy 1: Exact match (preserving structure)
+    snippet_normalized = normalize_lines_preserve_structure(snippet_lines)
+    snippet_tokens = extract_key_tokens(snippet_normalized)
+    
+    best_match = None
+    best_score = 0.0
+    
+    # Pre-compute normalized snippet for character matching
     norm_snippet = normalize_lines(snippet_lines)
-
+    
     for i in range(len(file_lines) - snippet_len + 1):
-
         window = file_lines[i : i + snippet_len]
+        window_normalized = normalize_lines_preserve_structure(window)
+        
+        # Strategy 1: Exact normalized match
+        if snippet_normalized == window_normalized:
+            start_line = i + 1
+            end_line = i + snippet_len
+            return (start_line, end_line)
+        
+        # Strategy 2: Token-based matching (more robust to whitespace differences)
+        window_tokens = extract_key_tokens(window_normalized)
+        token_score = 0.0
+        if snippet_tokens and window_tokens:
+            token_score = difflib.SequenceMatcher(None, snippet_tokens, window_tokens).ratio()
+        
+        # Strategy 3: Character-based fuzzy matching (fallback)
         norm_window = normalize_lines(window)
-
-        score = difflib.SequenceMatcher(None, norm_window, norm_snippet).ratio()
-        if score >= threshold:
-            return i + 1
-
-    return 1
+        char_score = difflib.SequenceMatcher(None, norm_window, norm_snippet).ratio()
+        
+        # Combine scores: prefer token matching but consider character matching
+        combined_score = max(token_score, char_score * 0.8)
+        
+        if combined_score > best_score:
+            best_score = combined_score
+            best_match = (i + 1, i + snippet_len)
+    
+    # Return best match if it meets threshold, otherwise return default
+    if best_match and best_score >= threshold:
+        return best_match
+    
+    # Strategy 4: Try partial matching for shorter snippets (if exact match failed)
+    if snippet_len >= 3:
+        # Try matching first 2-3 lines as anchor
+        anchor_lines = snippet_lines[:min(3, snippet_len)]
+        anchor_normalized = normalize_lines_preserve_structure(anchor_lines)
+        anchor_tokens = extract_key_tokens(anchor_normalized)
+        
+        for i in range(len(file_lines) - len(anchor_lines) + 1):
+            window_anchor = file_lines[i : i + len(anchor_lines)]
+            window_anchor_normalized = normalize_lines_preserve_structure(window_anchor)
+            
+            if anchor_normalized == window_anchor_normalized:
+                # Found anchor, try to extend to full snippet length
+                if i + snippet_len <= len(file_lines):
+                    full_window = file_lines[i : i + snippet_len]
+                    full_normalized = normalize_lines_preserve_structure(full_window)
+                    if difflib.SequenceMatcher(None, snippet_normalized, full_normalized).ratio() >= threshold * 0.9:
+                        return (i + 1, i + snippet_len)
+    
+    return (1, 1)
 
 
 def retry_on_recursion_error(fn, *args, bump=5000, retries=10, **kwargs):
@@ -200,8 +271,12 @@ def enrich_issues(file_path, issues):
             snippet_text = str(raw_snippet)
         snippet_text = snippet_text.strip()
 
-        line_number = find_snippet_line(snippet_text, file_lines)
-        issue["line_number"] = line_number
+        start_line, end_line = find_snippet_line(snippet_text, file_lines)
+        # Store as range string if multiple lines, single number if one line
+        if start_line == end_line:
+            issue["line_number"] = start_line
+        else:
+            issue["line_number"] = f"{start_line}-{end_line}"
 
         # Normalize and fill other standard fields
         normalize_issue_fields(issue)

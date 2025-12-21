@@ -276,7 +276,50 @@ def check_file_exists(file_path, quiet=False):
     return True
 
 
-def pretty_print_reviews(results, quiet=False):
+def sort_and_filter_reviews(reviews: list[dict], min_confidence: float = 0.0, severity_filter: list = None) -> list[dict]:
+    """
+    Sort reviews by severity and confidence, and filter by minimum confidence and severity.
+    
+    Args:
+        reviews: List of review dictionaries
+        min_confidence: Minimum confidence threshold (0.0-1.0)
+        severity_filter: List of severity levels to include (e.g., ["High", "Critical"])
+    
+    Returns:
+        Sorted and filtered list of reviews
+    """
+    if not reviews:
+        return reviews
+    
+    severity_order = {"Critical": 4, "High": 3, "Medium": 2, "Low": 1, "Unknown": 0}
+    
+    def sort_key(review):
+        severity = review.get("severity", "Unknown")
+        confidence = float(review.get("confidence", 0.0))
+        return (
+            -severity_order.get(severity, 0),  # 严重程度降序
+            -confidence,  # 置信度降序
+        )
+    
+    # Filter by confidence and severity
+    filtered = []
+    for r in reviews:
+        confidence = float(r.get("confidence", 0.0))
+        severity = r.get("severity", "Unknown")
+        
+        if confidence < min_confidence:
+            continue
+        
+        if severity_filter and severity not in severity_filter:
+            continue
+        
+        filtered.append(r)
+    
+    # Sort by severity and confidence
+    return sorted(filtered, key=sort_key)
+
+
+def pretty_print_reviews(results, quiet=False, min_confidence=0.0, severity_filter=None):
     if not results or not results.get("reviews"):
         print_console("[bold green]No security issues found![/bold green]", quiet)
         return
@@ -284,6 +327,11 @@ def pretty_print_reviews(results, quiet=False):
     for file_review in results.get("reviews", []):
         file = file_review.get("file", "UNKNOWN FILE")
         reviews = file_review.get("reviews", [])
+        
+        # Sort and filter reviews
+        if reviews:
+            reviews = sort_and_filter_reviews(reviews, min_confidence, severity_filter)
+        
         if reviews:
             print_console(f"\n[bold blue]File: {escape(file)}[/bold blue]", quiet)
             for idx, r in enumerate(reviews, 1):
