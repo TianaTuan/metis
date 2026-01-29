@@ -94,7 +94,7 @@ def generate_sarif(
         for issue in review.get("reviews", []):
             text = issue.get("issue", "unspecified")
             raw_line = issue.get("line_number", 1)
-            
+
             # Handle line number range (e.g., "109-115") or single line number
             if isinstance(raw_line, str) and "-" in raw_line:
                 try:
@@ -104,7 +104,13 @@ def generate_sarif(
                     line_num = start_line  # Use start line for context calculation
                 except (ValueError, AttributeError):
                     # Fallback if parsing fails
-                    start_line = max(1, min(int(raw_line) if str(raw_line).isdigit() else 1, total_lines or 1))
+                    start_line = max(
+                        1,
+                        min(
+                            int(raw_line) if str(raw_line).isdigit() else 1,
+                            total_lines or 1,
+                        ),
+                    )
                     end_line = start_line
                     line_num = start_line
             else:
@@ -146,11 +152,11 @@ def generate_sarif(
 
             # Build region with optional endLine
             region = {
-                "startLine": start_line,
+                "startLine": start,
                 "snippet": {"text": snippet},
             }
-            if end_line > start_line:
-                region["endLine"] = end_line
+            if end > start:
+                region["endLine"] = end
 
             run["results"].append(
                 {

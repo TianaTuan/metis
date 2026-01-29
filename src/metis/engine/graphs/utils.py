@@ -10,61 +10,56 @@ from .schemas import ReviewIssueModel
 logger = logging.getLogger("metis")
 
 
+def retrieve_documents(retriever, query, min_score=None, max_docs=None):
+    try:
+        docs = retriever.get_relevant_documents(query)
+        if not docs:
+            return []
+
+        filtered_docs = []
+        for doc in docs:
+            score = getattr(doc, "score", None)
+            if score is None:
+                metadata = getattr(doc, "metadata", {}) or {}
+                score = metadata.get("score", None)
+
+            if min_score is not None and score is not None and score < min_score:
+                continue
+
+            filtered_docs.append(doc)
+            if max_docs is not None and len(filtered_docs) >= max_docs:
+                break
+
+        if not filtered_docs and docs:
+            return docs[:max_docs] if max_docs else docs
+
+        return filtered_docs
+    except Exception as e:
+        logger.warning(f"Error retrieving context: {e}")
+        return []
+
+
 def retrieve_text(retriever, query, min_score=None, max_docs=None):
     """
     Retrieve context using a retriever with get_relevant_documents.
     Enhanced with relevance filtering and result limiting.
-    
+
     Args:
         retriever: The retriever instance
         query: Query string
         min_score: Minimum relevance score threshold (if retriever supports scoring)
         max_docs: Maximum number of documents to return (default: None, use retriever's top_k)
-    
+
     Returns:
         Concatenated text from retrieved documents
     """
-    try:
-        docs = retriever.get_relevant_documents(query)
-        if not docs:
-            return ""
-        
-        # Filter by relevance score if available and min_score is set
-        filtered_docs = []
-        for doc in docs:
-            # Check if document has a score attribute (some retrievers provide this)
-            score = getattr(doc, 'score', None)
-            if score is None:
-                # Try to get score from metadata
-                metadata = getattr(doc, 'metadata', {})
-                score = metadata.get('score', None)
-            
-            # Filter by minimum score if specified and score is available
-            if min_score is not None and score is not None:
-                if score < min_score:
-                    continue
-            
-            filtered_docs.append(doc)
-            
-            # Limit number of documents if specified
-            if max_docs is not None and len(filtered_docs) >= max_docs:
-                break
-        
-        # If no docs after filtering but we had docs originally, use original docs
-        if not filtered_docs and docs:
-            filtered_docs = docs[:max_docs] if max_docs else docs
-        
-        # Join document contents
-        contents = []
-        for doc in filtered_docs:
-            content = getattr(doc, "page_content", str(doc))
-            if content:
-                contents.append(content)
-        
-        return "\n\n".join(contents)
-    except Exception as e:
-        logger.warning(f"Error retrieving context: {e}")
-        return ""
+    docs = retrieve_documents(retriever, query, min_score=min_score, max_docs=max_docs)
+    contents = []
+    for doc in docs:
+        content = getattr(doc, "page_content", str(doc))
+        if content:
+            contents.append(content)
+    return "\n\n".join(contents)
 
 
 def synthesize_context(code_text, doc_text):

@@ -18,6 +18,7 @@ from .utils import (
     save_output,
     print_console,
     sort_and_filter_reviews,
+    attach_flow_graph,
 )
 
 console = Console()
@@ -67,11 +68,12 @@ def run_review(engine, patch_file, args):
         quiet=args.quiet,
     )
     pretty_print_reviews(
-        results, 
+        results,
         args.quiet,
-        min_confidence=getattr(args, 'min_confidence', 0.0),
-        severity_filter=getattr(args, 'severity_filter', None)
+        min_confidence=getattr(args, "min_confidence", 0.0),
+        severity_filter=getattr(args, "severity_filter", None),
     )
+    attach_flow_graph(results)
     save_output(args.output_file, results, args.quiet)
 
 
@@ -91,11 +93,12 @@ def run_file_review(engine, file_path, args):
         results = {"reviews": []}
 
     pretty_print_reviews(
-        results, 
+        results,
         args.quiet,
-        min_confidence=getattr(args, 'min_confidence', 0.0),
-        severity_filter=getattr(args, 'severity_filter', None)
+        min_confidence=getattr(args, "min_confidence", 0.0),
+        severity_filter=getattr(args, "severity_filter", None),
     )
+    attach_flow_graph(results)
     save_output(args.output_file, results, args.quiet)
 
 
@@ -110,11 +113,12 @@ def run_review_code(engine, args):
             "Reviewing codebase...", collect_reviews, engine, quiet=args.quiet
         )
     pretty_print_reviews(
-        results, 
+        results,
         args.quiet,
-        min_confidence=getattr(args, 'min_confidence', 0.0),
-        severity_filter=getattr(args, 'severity_filter', None)
+        min_confidence=getattr(args, "min_confidence", 0.0),
+        severity_filter=getattr(args, "severity_filter", None),
     )
+    attach_flow_graph(results)
     save_output(args.output_file, results, args.quiet)
 
 
@@ -166,9 +170,8 @@ def run_report(engine, args):
     """
     from pathlib import Path
     from datetime import datetime
-    
+
     # Determine output format and file
-    print("DEBUG: args =", args)
     if args.output_file:
         output_files = args.output_file
     else:
@@ -178,9 +181,8 @@ def run_report(engine, args):
         output_files = [f"reports/metis_report_{timestamp}.html"]
         print_console(
             f"[cyan]No output file specified, using default: {output_files[0]}[/cyan]",
-            args.quiet
+            args.quiet,
         )
-    print("DEBUG: output_files =", output_files)
     # Run review if needed (this will generate results)
     if args.verbose:
         print_console("[cyan]Ouputting report...[/cyan]", args.quiet)
@@ -191,7 +193,7 @@ def run_report(engine, args):
         results = with_spinner(
             "Ouputting report...", collect_reviews, engine, quiet=args.quiet
         )
-    
+
     # Apply filtering and sorting
     filtered_results = {"reviews": []}
     for file_review in results.get("reviews", []):
@@ -199,23 +201,25 @@ def run_report(engine, args):
         if reviews:
             filtered_reviews = sort_and_filter_reviews(
                 reviews,
-                min_confidence=getattr(args, 'min_confidence', 0.0),
-                severity_filter=getattr(args, 'severity_filter', None)
+                min_confidence=getattr(args, "min_confidence", 0.0),
+                severity_filter=getattr(args, "severity_filter", None),
             )
             if filtered_reviews:
-                filtered_results["reviews"].append({
-                    **file_review,
-                    "reviews": filtered_reviews
-                })
+                filtered_results["reviews"].append(
+                    {**file_review, "reviews": filtered_reviews}
+                )
         else:
             filtered_results["reviews"].append(file_review)
-    
+
     # Save reports
+    attach_flow_graph(filtered_results)
     save_output(output_files, filtered_results, args.quiet)
-    
+
     # Print summary
-    total_issues = sum(len(fr.get("reviews", [])) for fr in filtered_results.get("reviews", []))
+    total_issues = sum(
+        len(fr.get("reviews", [])) for fr in filtered_results.get("reviews", [])
+    )
     print_console(
         f"[green]Report generated with {total_issues} issue(s) found.[/green]",
-        args.quiet
+        args.quiet,
     )

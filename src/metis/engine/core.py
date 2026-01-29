@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import logging
+import inspect
 import os
 import unidiff
 import pathspec
@@ -19,6 +20,8 @@ from metis.exceptions import (
 )
 from metis.vector_store.base import BaseVectorStore
 from metis.plugin_loader import load_plugins, discover_supported_language_names
+from metis.providers.embedding_base import EmbeddingProvider
+from metis.providers.embedding_adapter import LLMProviderEmbeddingAdapter
 from metis.utils import (
     read_file_content,
 )
@@ -37,6 +40,39 @@ from metis.engine.graphs import ReviewGraph, AskGraph
 logger = logging.getLogger("metis")
 
 
+def _invoke_review_graph(graph, req, similarity_top_k: int | None, min_retrieval_score):
+    review_fn = getattr(graph, "review", None)
+    if not callable(review_fn):
+        raise AttributeError("Review graph does not provide a callable review() method")
+
+    try:
+        sig = inspect.signature(review_fn)
+    except (TypeError, ValueError):
+        return review_fn(
+            req,
+            similarity_top_k=similarity_top_k,
+            min_retrieval_score=min_retrieval_score,
+        )
+
+    params = sig.parameters
+    accepts_kwargs = any(
+        p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
+    )
+    if (
+        not accepts_kwargs
+        and "similarity_top_k" not in params
+        and "min_retrieval_score" not in params
+    ):
+        return review_fn(req)
+
+    kwargs = {}
+    if accepts_kwargs or "similarity_top_k" in params:
+        kwargs["similarity_top_k"] = similarity_top_k
+    if accepts_kwargs or "min_retrieval_score" in params:
+        kwargs["min_retrieval_score"] = min_retrieval_score
+    return review_fn(req, **kwargs)
+
+
 class MetisEngine:
 
     _SUPPORTED_LANGUAGES = None
@@ -46,6 +82,7 @@ class MetisEngine:
         codebase_path=".",
         vector_backend=BaseVectorStore,
         llm_provider=None,
+        embedding_provider=None,
         **kwargs,
     ):
         self.codebase_path = codebase_path
@@ -66,6 +103,24 @@ class MetisEngine:
             setattr(self, k, kwargs[k])
 
         self.llm_provider = llm_provider
+
+        # 设置 embedding_provider：如果提供了独立的 embedding_provider，使用它；
+        # 否则使用 LLMProviderEmbeddingAdapter 将 llm_provider 适配为 EmbeddingProvider（向后兼容）
+        if embedding_provider is not None:
+            if not isinstance(embedding_provider, EmbeddingProvider):
+                raise TypeError(
+                    f"embedding_provider must be an instance of EmbeddingProvider, "
+                    f"got {type(embedding_provider)}"
+                )
+            self.embedding_provider = embedding_provider
+        elif llm_provider is not None:
+            # 向后兼容：使用适配器将 llm_provider 适配为 EmbeddingProvider
+            self.embedding_provider = LLMProviderEmbeddingAdapter(llm_provider)
+        else:
+            raise ValueError(
+                "Either llm_provider or embedding_provider must be provided"
+            )
+
         self.doc_chunk_size = kwargs.get("doc_chunk_size", 1024)
         self.doc_chunk_overlap = kwargs.get("doc_chunk_overlap", 200)
         # Optional user-provided guidance to be appended to system prompts
@@ -94,9 +149,45 @@ class MetisEngine:
         self._ask_graph = None
         self.metisignore_file = kwargs.get("metisignore_file") or ".metisignore"
         # Retrieval optimization parameters
-        self.min_retrieval_score = kwargs.get("min_retrieval_score")
-        # Retrieval optimization parameters
-        self.min_retrieval_score = kwargs.get("min_retrieval_score")
+        # Call graph cache for enhanced RAG
+        self._call_graph_cache = {}
+        self._enable_call_graph = kwargs.get("enable_call_graph", True)
+
+    def _build_call_graph_cache(self, code_docs):
+        """
+        构建调用图缓存，用于增强的 RAG 检索
+        """
+        if not self._enable_call_graph:
+            return
+        
+        try:
+            from metis.rag.call_graph import analyze_code_file
+            
+            for doc in code_docs:
+                file_path = getattr(doc, "id_", None) or getattr(doc, "doc_id", None)
+                if not file_path:
+                    continue
+                
+                # 获取文件内容
+                content = getattr(doc, "page_content", None) or getattr(doc, "text", None)
+                if not content:
+                    continue
+                
+                # 确定语言
+                ext = os.path.splitext(file_path)[1].lower()
+                plugin = self._get_plugin_for_extension(ext)
+                if not plugin:
+                    continue
+                
+                language = plugin.get_name() if hasattr(plugin, "get_name") else "python"
+                
+                # 分析调用图
+                call_graph_data = analyze_code_file(file_path, content, language)
+                if call_graph_data.get("call_graph"):
+                    self._call_graph_cache[file_path] = call_graph_data
+                    logger.debug(f"Built call graph for {file_path}: {len(call_graph_data.get('functions', {}))} functions")
+        except Exception as e:
+            logger.warning(f"Failed to build call graph cache: {e}")
 
     def load_metisignore(self):
         """
@@ -264,6 +355,11 @@ class MetisEngine:
 
         # Store nodes for embedding phase
         self._pending_nodes = (nodes_code, nodes_docs)
+        
+        # Build call graph cache for enhanced RAG (after nodes are prepared)
+        if self._enable_call_graph:
+            self._build_call_graph_cache(code_docs)
+        
         return
 
     def index_prepare_nodes(self):
@@ -287,13 +383,13 @@ class MetisEngine:
         VectorStoreIndex(
             nodes_code,
             storage_context=storage_context_code,
-            embed_model=self.llm_provider.get_embed_model_code(),
+            embed_model=self.embedding_provider.get_embed_model_code(),
         )
 
         VectorStoreIndex(
             nodes_docs,
             storage_context=storage_context_docs,
-            embed_model=self.llm_provider.get_embed_model_docs(),
+            embed_model=self.embedding_provider.get_embed_model_docs(),
         )
         # Clear pending nodes
         self._pending_nodes = None
@@ -335,9 +431,16 @@ class MetisEngine:
                 "default_prompt_key": "security_review_file",
                 "relative_file": relative_path,
                 "mode": "file",
+                "call_graph_cache": self._call_graph_cache if self._enable_call_graph else None,
+                "enable_call_graph": self._enable_call_graph,
             }
             graph = self._get_review_graph()
-            return graph.review(req, similarity_top_k=self.similarity_top_k, min_retrieval_score=self.min_retrieval_score)
+            return _invoke_review_graph(
+                graph,
+                req,
+                similarity_top_k=self.similarity_top_k,
+                min_retrieval_score=self.min_retrieval_score,
+            )
         except Exception as e:
             logger.error(f"Error processing file {file_path}: {e}")
             return None
@@ -433,9 +536,16 @@ class MetisEngine:
                     "relative_file": relative_path,
                     "mode": "patch",
                     "original_file": original_content or "",
+                    "call_graph_cache": self._call_graph_cache if self._enable_call_graph else None,
+                    "enable_call_graph": self._enable_call_graph,
                 }
                 graph = self._get_review_graph()
-                review_dict = graph.review(req, similarity_top_k=self.similarity_top_k, min_retrieval_score=self.min_retrieval_score)
+                review_dict = _invoke_review_graph(
+                    graph,
+                    req,
+                    similarity_top_k=self.similarity_top_k,
+                    min_retrieval_score=self.min_retrieval_score,
+                )
             except Exception as e:
                 logger.error(f"Error processing review for {file_diff.path}: {e}")
                 review_dict = None
@@ -475,12 +585,12 @@ class MetisEngine:
         index_code = VectorStoreIndex.from_vector_store(
             self.vector_backend.vector_store_code,
             storage_context=storage_context_code,
-            embed_model=self.llm_provider.get_embed_model_code(),
+            embed_model=self.embedding_provider.get_embed_model_code(),
         )
         index_docs = VectorStoreIndex.from_vector_store(
             self.vector_backend.vector_store_docs,
             storage_context=storage_context_docs,
-            embed_model=self.llm_provider.get_embed_model_docs(),
+            embed_model=self.embedding_provider.get_embed_model_docs(),
         )
 
         doc_splitter = self._get_doc_splitter()

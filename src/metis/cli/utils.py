@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import importlib.metadata
+import hashlib
 import json
 import logging
 import os
@@ -23,6 +24,13 @@ from rich.progress import (
 )
 
 from .exporters import export_csv, export_html, export_sarif
+
+# 可选：使用 MCP Skill 生成 HTML
+try:
+    from metis.mcp.skills.html_generator import HTMLGeneratorSkill
+    MCP_HTML_AVAILABLE = True
+except ImportError:
+    MCP_HTML_AVAILABLE = False
 
 try:
     METIS_VERSION = importlib.metadata.version("metis")
@@ -221,13 +229,38 @@ def save_output(output_files, data, quiet=False):
 
         if suffix == ".html":
             try:
-                html_path = export_html(
-                    data, output_path, REPORT_TEMPLATE, METIS_VERSION
-                )
-                print_console(
-                    f"[blue]HTML report saved to {escape(str(html_path))}[/blue]",
-                    quiet,
-                )
+                # 优先使用 MCP Skill 生成 HTML（如果可用）
+                if MCP_HTML_AVAILABLE:
+                    html_skill = HTMLGeneratorSkill()
+                    result = html_skill.execute(
+                        report_data=data,
+                        output_path=str(output_path),
+                    )
+                    if result.get("success"):
+                        html_path = Path(result["html_path"])
+                        print_console(
+                            f"[blue]HTML report saved to {escape(str(html_path))}[/blue] (via MCP Skill)",
+                            quiet,
+                        )
+                    else:
+                        # 回退到传统方法
+                        logger.warning(f"MCP Skill failed, falling back to traditional method: {result.get('error')}")
+                        html_path = export_html(
+                            data, output_path, REPORT_TEMPLATE, METIS_VERSION
+                        )
+                        print_console(
+                            f"[blue]HTML report saved to {escape(str(html_path))}[/blue]",
+                            quiet,
+                        )
+                else:
+                    # 使用传统方法
+                    html_path = export_html(
+                        data, output_path, REPORT_TEMPLATE, METIS_VERSION
+                    )
+                    print_console(
+                        f"[blue]HTML report saved to {escape(str(html_path))}[/blue]",
+                        quiet,
+                    )
             except Exception as exc:  # pragma: no cover - defensive
                 logger.error("Failed to generate HTML report: %s", exc)
                 print_console("[red]Failed to generate HTML report.[/red]", quiet)
@@ -276,23 +309,25 @@ def check_file_exists(file_path, quiet=False):
     return True
 
 
-def sort_and_filter_reviews(reviews: list[dict], min_confidence: float = 0.0, severity_filter: list = None) -> list[dict]:
+def sort_and_filter_reviews(
+    reviews: list[dict], min_confidence: float = 0.0, severity_filter: list = None
+) -> list[dict]:
     """
     Sort reviews by severity and confidence, and filter by minimum confidence and severity.
-    
+
     Args:
         reviews: List of review dictionaries
         min_confidence: Minimum confidence threshold (0.0-1.0)
         severity_filter: List of severity levels to include (e.g., ["High", "Critical"])
-    
+
     Returns:
         Sorted and filtered list of reviews
     """
     if not reviews:
         return reviews
-    
+
     severity_order = {"Critical": 4, "High": 3, "Medium": 2, "Low": 1, "Unknown": 0}
-    
+
     def sort_key(review):
         severity = review.get("severity", "Unknown")
         confidence = float(review.get("confidence", 0.0))
@@ -300,26 +335,28 @@ def sort_and_filter_reviews(reviews: list[dict], min_confidence: float = 0.0, se
             -severity_order.get(severity, 0),  # 严重程度降序
             -confidence,  # 置信度降序
         )
-    
+
     # Filter by confidence and severity
     filtered = []
     for r in reviews:
         confidence = float(r.get("confidence", 0.0))
         severity = r.get("severity", "Unknown")
-        
+
         if confidence < min_confidence:
             continue
-        
+
         if severity_filter and severity not in severity_filter:
             continue
-        
+
         filtered.append(r)
-    
+
     # Sort by severity and confidence
     return sorted(filtered, key=sort_key)
 
 
-def pretty_print_reviews(results, quiet=False, min_confidence=0.0, severity_filter=None):
+def pretty_print_reviews(
+    results, quiet=False, min_confidence=0.0, severity_filter=None
+):
     if not results or not results.get("reviews"):
         print_console("[bold green]No security issues found![/bold green]", quiet)
         return
@@ -327,11 +364,11 @@ def pretty_print_reviews(results, quiet=False, min_confidence=0.0, severity_filt
     for file_review in results.get("reviews", []):
         file = file_review.get("file", "UNKNOWN FILE")
         reviews = file_review.get("reviews", [])
-        
+
         # Sort and filter reviews
         if reviews:
             reviews = sort_and_filter_reviews(reviews, min_confidence, severity_filter)
-        
+
         if reviews:
             print_console(f"\n[bold blue]File: {escape(file)}[/bold blue]", quiet)
             for idx, r in enumerate(reviews, 1):
@@ -390,6 +427,151 @@ def pretty_print_reviews(results, quiet=False, min_confidence=0.0, severity_filt
                     print_console("", quiet)
         else:
             print_console(f"[green]No issues in {escape(file)}[/green]", quiet)
+
+
+def build_flow_graph(results: dict) -> dict:
+    if not isinstance(results, dict):
+        return {"nodes": [], "edges": [], "attackChains": []}
+
+    severity_rank = {"Critical": 4, "High": 3, "Medium": 2, "Low": 1, "Unknown": 0}
+    nodes: dict[str, dict] = {}
+    edges: dict[tuple[str, str], dict] = {}
+    attack_chains: list[dict] = []
+
+    for file_entry in results.get("reviews", []) or []:
+        if not isinstance(file_entry, dict):
+            continue
+        source_file = file_entry.get("file") or file_entry.get("file_path") or "Unknown"
+        if not isinstance(source_file, str) or not source_file.strip():
+            source_file = "Unknown"
+        source_file = source_file.strip()
+
+        issues = file_entry.get("reviews", []) or []
+        issue_count = len(issues) if isinstance(issues, list) else 0
+        max_sev = "Unknown"
+        if isinstance(issues, list):
+            for issue in issues:
+                if not isinstance(issue, dict):
+                    continue
+                sev = issue.get("severity") or "Unknown"
+                if not isinstance(sev, str):
+                    sev = str(sev)
+                sev = sev.strip() or "Unknown"
+                if severity_rank.get(sev, 0) > severity_rank.get(max_sev, 0):
+                    max_sev = sev
+
+        node = nodes.setdefault(
+            source_file,
+            {
+                "id": source_file,
+                "label": source_file,
+                "issueCount": 0,
+                "maxSeverity": "Unknown",
+            },
+        )
+        node["issueCount"] = int(node.get("issueCount", 0)) + issue_count
+        if severity_rank.get(max_sev, 0) > severity_rank.get(
+            node.get("maxSeverity", "Unknown"), 0
+        ):
+            node["maxSeverity"] = max_sev
+
+        links = file_entry.get("context_links", []) or []
+        if isinstance(links, list):
+            for link in links:
+                if not isinstance(link, dict):
+                    continue
+                target = link.get("file")
+                if not isinstance(target, str) or not target.strip():
+                    continue
+                target = target.strip()
+                if target == source_file:
+                    continue
+                kind = link.get("kind") or "unknown"
+                key = (source_file, target)
+                edge = edges.setdefault(
+                    key,
+                    {"source": source_file, "target": target, "weight": 0, "kinds": {}},
+                )
+                edge["weight"] = int(edge.get("weight", 0)) + 1
+                kinds = edge.setdefault("kinds", {})
+                kinds[kind] = int(kinds.get(kind, 0)) + 1
+
+                nodes.setdefault(
+                    target,
+                    {
+                        "id": target,
+                        "label": target,
+                        "issueCount": 0,
+                        "maxSeverity": "Unknown",
+                    },
+                )
+
+        if isinstance(issues, list):
+            for issue in issues:
+                if not isinstance(issue, dict):
+                    continue
+                issue_text = str(issue.get("issue") or "").strip()
+                line = issue.get("line_number")
+                line_text = str(line).strip() if line not in (None, "") else ""
+                severity = issue.get("severity") or "Unknown"
+                if not isinstance(severity, str):
+                    severity = str(severity)
+                severity = severity.strip() or "Unknown"
+                snippet = issue.get("code_snippet")
+                snippet_text = str(snippet or "").strip()
+
+                chain_key = f"{source_file}:{line_text}:{issue_text}"
+                chain_id = hashlib.sha256(chain_key.encode("utf-8")).hexdigest()[:16]
+
+                steps = [
+                    {
+                        "kind": "vulnerability",
+                        "file": source_file,
+                        "line": line_text,
+                        "issue": issue_text,
+                        "snippet": snippet_text,
+                    }
+                ]
+                if isinstance(links, list):
+                    for link in links:
+                        if not isinstance(link, dict):
+                            continue
+                        target = link.get("file")
+                        if not isinstance(target, str) or not target.strip():
+                            continue
+                        steps.append(
+                            {
+                                "kind": "context",
+                                "via": str(link.get("kind") or "unknown"),
+                                "file": target.strip(),
+                                "score": link.get("score"),
+                                "excerpt": str(link.get("excerpt") or ""),
+                            }
+                        )
+
+                attack_chains.append(
+                    {
+                        "id": chain_id,
+                        "file": source_file,
+                        "severity": severity,
+                        "issue": issue_text,
+                        "line": line_text,
+                        "steps": steps,
+                    }
+                )
+
+    return {
+        "nodes": list(nodes.values()),
+        "edges": list(edges.values()),
+        "attackChains": attack_chains,
+    }
+
+
+def attach_flow_graph(results: dict) -> dict:
+    if not isinstance(results, dict):
+        return results
+    results["flow_graph"] = build_flow_graph(results)
+    return results
 
 
 def build_pg_backend(args, runtime, embed_model_code, embed_model_docs, quiet=False):

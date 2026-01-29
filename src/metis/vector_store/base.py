@@ -29,8 +29,12 @@ class BaseVectorStore(ABC):
 
 
 class _Doc:
-    def __init__(self, text: str):
+    def __init__(
+        self, text: str, metadata: dict | None = None, score: float | None = None
+    ):
         self.page_content = text
+        self.metadata = metadata or {}
+        self.score = score
 
 
 class QueryEngineRetriever:
@@ -42,9 +46,73 @@ class QueryEngineRetriever:
     def __init__(self, query_engine):
         self._qe = query_engine
 
-    def _query_text(self, query: str) -> str:
-        res = self._qe.query(query)
-        return str(getattr(res, "response", res))
+    def _extract_docs_from_nodes(self, nodes):
+        docs = []
+        if not nodes:
+            return docs
+        for item in nodes:
+            node = getattr(item, "node", item)
+            score = getattr(item, "score", None)
+            if score is None:
+                score = getattr(item, "similarity", None)
+            metadata = getattr(node, "metadata", None)
+            text = getattr(node, "text", None)
+            if text is None:
+                text = getattr(node, "get_content", None)
+                if callable(text):
+                    text = text()
+            if text is None:
+                text = str(node)
+            docs.append(_Doc(str(text), metadata=dict(metadata or {}), score=score))
+        return docs
+
+    def _retrieve_nodes(self, query: str):
+        retrieve = getattr(self._qe, "retrieve", None)
+        if callable(retrieve):
+            return retrieve(query)
+        retriever = getattr(self._qe, "retriever", None)
+        if retriever is not None:
+            retrieve = getattr(retriever, "retrieve", None)
+            if callable(retrieve):
+                return retrieve(query)
+        internal = getattr(self._qe, "_retriever", None)
+        if internal is not None:
+            retrieve = getattr(internal, "retrieve", None)
+            if callable(retrieve):
+                return retrieve(query)
+        return None
+
+    def _query_response(self, query: str):
+        query_fn = getattr(self._qe, "query", None)
+        if callable(query_fn):
+            return query_fn(query)
+        return None
 
     def get_relevant_documents(self, query: str):
-        return [_Doc(self._query_text(query))]
+        nodes = None
+        try:
+            nodes = self._retrieve_nodes(query)
+        except Exception:
+            nodes = None
+
+        if nodes:
+            docs = self._extract_docs_from_nodes(nodes)
+            if docs:
+                return docs
+
+        try:
+            res = self._query_response(query)
+        except Exception:
+            res = None
+
+        source_nodes = getattr(res, "source_nodes", None) if res is not None else None
+        docs = self._extract_docs_from_nodes(source_nodes)
+        if docs:
+            return docs
+
+        response_text = getattr(res, "response", None) if res is not None else None
+        if response_text is None and res is not None:
+            response_text = str(res)
+        if not response_text:
+            return []
+        return [_Doc(str(response_text), metadata={"kind": "query_response"})]

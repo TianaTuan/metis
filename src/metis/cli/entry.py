@@ -16,6 +16,8 @@ from metis.configuration import load_runtime_config
 from metis.engine import MetisEngine
 from metis.utils import read_file_content
 from metis.providers.registry import get_provider
+from metis.providers.embedding_registry import get_embedding_provider
+from metis.providers.embedding_adapter import LLMProviderEmbeddingAdapter
 
 try:
     from metis.vector_store.pgvector_store import PGVectorStoreImpl
@@ -201,8 +203,55 @@ def main():
     provider_cls = get_provider(llm_provider_name)
     llm_provider = provider_cls(runtime)
 
-    embed_model_code = llm_provider.get_embed_model_code()
-    embed_model_docs = llm_provider.get_embed_model_docs()
+    # 检查是否配置了独立的 embedding_provider
+    use_separate_embedding_provider = runtime.get(
+        "use_separate_embedding_provider", False
+    )
+    if use_separate_embedding_provider:
+        # 构建独立的 embedding_provider
+        embedding_provider_name = runtime.get(
+            "embedding_provider_name", "openai_compatible"
+        )
+        embedding_provider_cls = get_embedding_provider(embedding_provider_name)
+
+        # 构建 embedding_provider 的配置
+        embedding_config = {}
+        embedding_config["code_embedding_model"] = runtime.get(
+            "embedding_code_embedding_model", ""
+        )
+        embedding_config["docs_embedding_model"] = runtime.get(
+            "embedding_docs_embedding_model", ""
+        )
+        embedding_config["code_embedding_extra_kwargs"] = runtime.get(
+            "embedding_code_embedding_extra_kwargs", {}
+        )
+        embedding_config["docs_embedding_extra_kwargs"] = runtime.get(
+            "embedding_docs_embedding_extra_kwargs", {}
+        )
+        embedding_config["llm_api_key"] = runtime.get("embedding_llm_api_key")
+        embedding_config["openai_api_base"] = runtime.get(
+            "embedding_openai_api_base", ""
+        )
+        embedding_config["openai_default_headers"] = runtime.get(
+            "embedding_openai_default_headers", {}
+        )
+        embedding_config["api_key"] = runtime.get("embedding_llm_api_key")
+        embedding_config["base_url"] = runtime.get("embedding_openai_api_base", "")
+        embedding_config["default_headers"] = runtime.get(
+            "embedding_openai_default_headers", {}
+        )
+
+        embedding_provider = embedding_provider_cls(embedding_config)
+        logger.info(f"Using separate embedding provider: {embedding_provider_name}")
+    else:
+        # 向后兼容：使用 LLMProviderEmbeddingAdapter 将 llm_provider 适配为 EmbeddingProvider
+        embedding_provider = LLMProviderEmbeddingAdapter(llm_provider)
+        logger.info(
+            "Using LLM provider's embedding functionality (backward compatibility)"
+        )
+
+    embed_model_code = embedding_provider.get_embed_model_code()
+    embed_model_docs = embedding_provider.get_embed_model_docs()
 
     if args.backend == "postgres":
         vector_backend = build_pg_backend(
@@ -233,6 +282,7 @@ def main():
     engine = MetisEngine(
         codebase_path=args.codebase_path,
         llm_provider=llm_provider,
+        embedding_provider=embedding_provider,
         vector_backend=vector_backend,
         custom_prompt_text=custom_prompt_text,
         **runtime,

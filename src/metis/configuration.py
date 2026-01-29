@@ -54,6 +54,46 @@ def load_runtime_config(config_path=None, enable_psql=False):
         "docs_embedding_extra_kwargs", {}
     )
 
+    # 支持独立的 embedding_provider 配置
+    embedding_cfg = cfg.get("embedding_provider", {})
+    if embedding_cfg:
+        # 如果配置了独立的 embedding_provider，使用它
+        runtime["use_separate_embedding_provider"] = True
+        runtime["embedding_provider_name"] = embedding_cfg.get("name", "").lower()
+        runtime["embedding_code_embedding_model"] = embedding_cfg.get(
+            "code_embedding_model", ""
+        )
+        runtime["embedding_docs_embedding_model"] = embedding_cfg.get(
+            "docs_embedding_model", ""
+        )
+        runtime["embedding_code_embedding_extra_kwargs"] = embedding_cfg.get(
+            "code_embedding_extra_kwargs", {}
+        )
+        runtime["embedding_docs_embedding_extra_kwargs"] = embedding_cfg.get(
+            "docs_embedding_extra_kwargs", {}
+        )
+        # 加载 embedding provider 特定的配置
+        embedding_provider_name = runtime["embedding_provider_name"]
+        if (
+            embedding_provider_name == "openai"
+            or embedding_provider_name == "openai_compatible"
+        ):
+            embedding_api_key = os.environ.get("OPENAI_API_KEY") or embedding_cfg.get(
+                "api_key"
+            )
+            if not embedding_api_key and embedding_provider_name == "openai":
+                raise RuntimeError(
+                    "OPENAI_API_KEY environment variable is required for OpenAI embedding provider but not set."
+                )
+            runtime["embedding_llm_api_key"] = embedding_api_key
+            runtime["embedding_openai_api_base"] = embedding_cfg.get("base_url", "")
+            runtime["embedding_openai_default_headers"] = embedding_cfg.get(
+                "default_headers", {}
+            )
+    else:
+        # 如果没有配置独立的 embedding_provider，使用 llm_provider 的 embedding 功能（向后兼容）
+        runtime["use_separate_embedding_provider"] = False
+
     llm_provider_name = cfg.get("llm_provider", {}).get("name", "").lower()
     runtime["llm_provider_name"] = llm_provider_name
     if llm_provider_name == "openai":
@@ -136,7 +176,9 @@ def load_runtime_config(config_path=None, enable_psql=False):
     runtime["llama_query_max_tokens"] = query_cfg.get("max_tokens", 500)
     runtime["similarity_top_k"] = query_cfg.get("similarity_top_k", 5)
     runtime["response_mode"] = query_cfg.get("response_mode", "compact")
-    runtime["min_retrieval_score"] = query_cfg.get("min_retrieval_score")  # Optional: minimum relevance score for retrieval
+    runtime["min_retrieval_score"] = query_cfg.get(
+        "min_retrieval_score"
+    )  # Optional: minimum relevance score for retrieval
 
     return runtime
 

@@ -30,6 +30,7 @@ build-backend = "setuptools.build_meta"
 
 [project.scripts]
 metis = "metis.cli.entry:main"
+metis-mcp = "metis.mcp.__main__:main"
 
 [project.optional-dependencies]
 postgres = ["llama-index-vector-stores-postgres>=0.5.4"]

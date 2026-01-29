@@ -101,8 +101,8 @@ def normalize_lines_preserve_structure(lines):
 def extract_key_tokens(text):
     """Extract key tokens (identifiers, keywords, operators) from code."""
     # Extract words, operators, and special characters
-    tokens = re.findall(r'\b\w+\b|[+\-*/=<>!&|{}();,\[\]]+', text)
-    return [t for t in tokens if len(t) > 1 or t in '{}()[];=<>!&|+-*/']
+    tokens = re.findall(r"\b\w+\b|[+\-*/=<>!&|{}();,\[\]]+", text)
+    return [t for t in tokens if len(t) > 1 or t in "{}()[];=<>!&|+-*/"]
 
 
 def find_snippet_line(snippet, file_lines, threshold=0.80):
@@ -119,67 +119,73 @@ def find_snippet_line(snippet, file_lines, threshold=0.80):
     snippet_len = len(snippet_lines)
     if snippet_len == 0:
         return (1, 1)
-    
+
     # Strategy 1: Exact match (preserving structure)
     snippet_normalized = normalize_lines_preserve_structure(snippet_lines)
     snippet_tokens = extract_key_tokens(snippet_normalized)
-    
+
     best_match = None
     best_score = 0.0
-    
+
     # Pre-compute normalized snippet for character matching
     norm_snippet = normalize_lines(snippet_lines)
-    
+
     for i in range(len(file_lines) - snippet_len + 1):
         window = file_lines[i : i + snippet_len]
         window_normalized = normalize_lines_preserve_structure(window)
-        
+
         # Strategy 1: Exact normalized match
         if snippet_normalized == window_normalized:
             start_line = i + 1
             end_line = i + snippet_len
             return (start_line, end_line)
-        
+
         # Strategy 2: Token-based matching (more robust to whitespace differences)
         window_tokens = extract_key_tokens(window_normalized)
         token_score = 0.0
         if snippet_tokens and window_tokens:
-            token_score = difflib.SequenceMatcher(None, snippet_tokens, window_tokens).ratio()
-        
+            token_score = difflib.SequenceMatcher(
+                None, snippet_tokens, window_tokens
+            ).ratio()
+
         # Strategy 3: Character-based fuzzy matching (fallback)
         norm_window = normalize_lines(window)
         char_score = difflib.SequenceMatcher(None, norm_window, norm_snippet).ratio()
-        
+
         # Combine scores: prefer token matching but consider character matching
         combined_score = max(token_score, char_score * 0.8)
-        
+
         if combined_score > best_score:
             best_score = combined_score
             best_match = (i + 1, i + snippet_len)
-    
+
     # Return best match if it meets threshold, otherwise return default
     if best_match and best_score >= threshold:
         return best_match
-    
+
     # Strategy 4: Try partial matching for shorter snippets (if exact match failed)
     if snippet_len >= 3:
         # Try matching first 2-3 lines as anchor
-        anchor_lines = snippet_lines[:min(3, snippet_len)]
+        anchor_lines = snippet_lines[: min(3, snippet_len)]
         anchor_normalized = normalize_lines_preserve_structure(anchor_lines)
-        anchor_tokens = extract_key_tokens(anchor_normalized)
-        
+
         for i in range(len(file_lines) - len(anchor_lines) + 1):
             window_anchor = file_lines[i : i + len(anchor_lines)]
             window_anchor_normalized = normalize_lines_preserve_structure(window_anchor)
-            
+
             if anchor_normalized == window_anchor_normalized:
                 # Found anchor, try to extend to full snippet length
                 if i + snippet_len <= len(file_lines):
                     full_window = file_lines[i : i + snippet_len]
                     full_normalized = normalize_lines_preserve_structure(full_window)
-                    if difflib.SequenceMatcher(None, snippet_normalized, full_normalized).ratio() >= threshold * 0.9:
+                    if (
+                        difflib.SequenceMatcher(
+                            None, snippet_normalized, full_normalized
+                        ).ratio()
+                        >= threshold * 0.9
+                    ):
                         return (i + 1, i + snippet_len)
-    
+
     return (1, 1)
 
 

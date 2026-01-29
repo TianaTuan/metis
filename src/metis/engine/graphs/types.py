@@ -20,6 +20,9 @@ class ReviewRequest(TypedDict):
     mode: NotRequired[str]
     # Optional original file contents for patch mode
     original_file: NotRequired[Optional[str]]
+    # Enhanced RAG: call graph cache for function call tracking
+    call_graph_cache: NotRequired[Optional[Dict]]
+    enable_call_graph: NotRequired[bool]
 
 
 class AskRequest(TypedDict):

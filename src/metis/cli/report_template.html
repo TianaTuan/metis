@@ -133,6 +133,16 @@
             <div id="treemapChart" class="echart"></div>
             <div class="chart-empty">No data available.</div>
         </div>
+        <div class="chart-card" id="flowCard">
+            <h2>
+                Data Flow / Attack Chain
+                <span class="chart-actions">
+                    <button class="chart-button chart-toggle" data-chart="flowChart" aria-label="Toggle full size" title="View full size">&#x26F6;</button>
+                </span>
+            </h2>
+            <div id="flowChart" class="echart"></div>
+            <div class="chart-empty">No data available.</div>
+        </div>
     </div>
     <div class="filters">
         <label>Severity
@@ -174,6 +184,7 @@
         const severityCounts = payload.severityCounts || {};
         const cweCounts = payload.cweCounts || {};
         const fileStats = payload.fileStats || {};
+        const flowGraph = payload.flowGraph || {};
         const severityFilter = document.getElementById('severityFilter');
         const cweFilter = document.getElementById('cweFilter');
         const folderFilter = document.getElementById('folderFilter');
@@ -184,7 +195,8 @@
         const chartCards = {
             severity: document.getElementById('severityCard'),
             cwe: document.getElementById('cweCard'),
-            treemap: document.getElementById('treemapCard')
+            treemap: document.getElementById('treemapCard'),
+            flow: document.getElementById('flowCard')
         };
         const resultsContainer = document.getElementById('results');
         const resultsCount = document.getElementById('resultsCount');
@@ -209,6 +221,7 @@
         let severityChartInstance = null;
         let cweChartInstance = null;
         let treemapChartInstance = null;
+        let flowChartInstance = null;
 
         function toggleFilter(select, value) {
             if (!select) return;
@@ -550,6 +563,7 @@
             renderSeverityChart();
             renderCweChart();
             renderTreemapChart();
+            renderFlowGraphChart();
             resizeCharts();
             updateChartHighlights();
         }
@@ -833,6 +847,123 @@
             resizeCharts();
         }
 
+        function renderFlowGraphChart() {
+            const container = document.getElementById('flowChart');
+            if (!container || typeof echarts === 'undefined') return;
+            const empty = container.parentElement ? container.parentElement.querySelector('.chart-empty') : null;
+            const nodes = Array.isArray(flowGraph.nodes) ? flowGraph.nodes : [];
+            const edges = Array.isArray(flowGraph.edges) ? flowGraph.edges : [];
+            const isLight = document.body.classList.contains('light-theme');
+
+            if (!nodes.length) {
+                if (empty) empty.style.display = 'block';
+                if (flowChartInstance) {
+                    flowChartInstance.dispose();
+                    flowChartInstance = null;
+                }
+                return;
+            }
+
+            if (empty) empty.style.display = 'none';
+
+            if (flowChartInstance) {
+                flowChartInstance.dispose();
+            }
+
+            const data = nodes.map(node => {
+                const count = typeof node.issueCount === 'number' ? node.issueCount : 0;
+                const size = Math.max(10, Math.min(60, 10 + count * 6));
+                const sev = node.maxSeverity || 'Unknown';
+                const color = severityColors[sev] || severityColors.Unknown;
+                return {
+                    id: node.id,
+                    name: node.label || node.id,
+                    value: count,
+                    symbolSize: size,
+                    itemStyle: { color }
+                };
+            });
+
+            const links = edges.map(edge => {
+                const weight = typeof edge.weight === 'number' ? edge.weight : 1;
+                return {
+                    source: edge.source,
+                    target: edge.target,
+                    value: weight,
+                    kinds: edge.kinds || {},
+                    lineStyle: {
+                        width: Math.max(1, Math.min(6, weight)),
+                        opacity: isLight ? 0.55 : 0.35,
+                        color: isLight ? 'rgba(59, 130, 246, 0.7)' : 'rgba(59, 130, 246, 0.55)'
+                    }
+                };
+            });
+
+            flowChartInstance = echarts.init(container);
+            flowChartInstance.setOption({
+                backgroundColor: 'transparent',
+                tooltip: {
+                    formatter: params => {
+                        if (!params) return '';
+                        if (params.dataType === 'node') {
+                            const value = params.data && (params.data.value || 0);
+                            return `<strong>${params.name}</strong><br/>Issues: ${value}<br/>Click to filter by file`;
+                        }
+                        if (params.dataType === 'edge') {
+                            const value = params.data && (params.data.value || 0);
+                            const kinds = (params.data && params.data.kinds) ? params.data.kinds : {};
+                            const kindsText = Object.entries(kinds)
+                                .sort((a, b) => b[1] - a[1])
+                                .slice(0, 4)
+                                .map(([k, v]) => `${k}: ${v}`)
+                                .join('<br/>');
+                            const kindsBlock = kindsText ? `<br/><br/>Kinds:<br/>${kindsText}` : '';
+                            return `<strong>${params.data.source}</strong> → <strong>${params.data.target}</strong><br/>Links: ${value}${kindsBlock}`;
+                        }
+                        return '';
+                    },
+                    textStyle: { color: isLight ? '#1f2937' : '#f8fafc' },
+                    backgroundColor: isLight ? 'rgba(248, 250, 252, 0.95)' : 'rgba(11, 23, 42, 0.95)',
+                    borderColor: isLight ? '#d0d7e4' : '#1f2c4d',
+                    borderWidth: 1
+                },
+                series: [{
+                    type: 'graph',
+                    layout: 'force',
+                    roam: true,
+                    data,
+                    links,
+                    edgeSymbol: ['none', 'arrow'],
+                    edgeSymbolSize: 6,
+                    emphasis: {
+                        focus: 'adjacency',
+                        lineStyle: { opacity: 0.85 }
+                    },
+                    force: {
+                        repulsion: 140,
+                        edgeLength: [40, 120],
+                        gravity: 0.08
+                    },
+                    label: {
+                        show: true,
+                        position: 'right',
+                        color: isLight ? '#111827' : '#e2e8f0',
+                        formatter: params => {
+                            const name = (params && params.name) ? String(params.name) : '';
+                            return name.length > 34 ? name.slice(0, 33) + '…' : name;
+                        }
+                    }
+                }]
+            });
+
+            flowChartInstance.off('click');
+            flowChartInstance.on('click', params => {
+                if (!params || params.dataType !== 'node' || !params.name) return;
+                clearAllFilters(fileFilter);
+                toggleFilter(fileFilter, params.name);
+            });
+        }
+
         function buildTreemapHierarchy(entries, activePath = '', isLightTheme = false) {
             const root = { name: 'root', children: [] };
 
@@ -949,6 +1080,9 @@
             }
             if (treemapChartInstance) {
                 treemapChartInstance.resize();
+            }
+            if (flowChartInstance) {
+                flowChartInstance.resize();
             }
         }
 

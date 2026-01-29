@@ -20,7 +20,12 @@ def export_html(
 ) -> Path:
     """Render the HTML report template with the provided data."""
     issues = _flatten_issues(report_data)
-    document = _build_html_document(issues, output_path.name, template, metis_version)
+    flow_graph = {}
+    if isinstance(report_data, dict):
+        flow_graph = report_data.get("flow_graph") or {}
+    document = _build_html_document(
+        issues, output_path.name, template, metis_version, flow_graph
+    )
     html_path = output_path.with_suffix(".html")
     html_path.parent.mkdir(parents=True, exist_ok=True)
     html_path.write_text(document, encoding="utf-8")
@@ -75,7 +80,11 @@ def export_csv(report_data, output_path: Path) -> Path:
 
 
 def _build_html_document(
-    issues: Iterable[dict], source_name: str, template: str, metis_version: str
+    issues: Iterable[dict],
+    source_name: str,
+    template: str,
+    metis_version: str,
+    flow_graph: dict | None = None,
 ) -> str:
     generated_at = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
     display_name = Path(source_name).stem if source_name else source_name
@@ -149,6 +158,7 @@ def _build_html_document(
         "cweCounts": dict(cwe_counts),
         "fileStats": file_stats_serialized,
         "folderStats": folder_stats_serialized,
+        "flowGraph": flow_graph or {},
     }
     data_json = json.dumps(payload, ensure_ascii=False).replace("</", "<\\/")
     return (
