@@ -248,8 +248,9 @@ def save_output(output_files, data, quiet=False):
                         html_path = export_html(
                             data, output_path, REPORT_TEMPLATE, METIS_VERSION
                         )
+                        from metis.i18n import t
                         print_console(
-                            f"[blue]HTML report saved to {escape(str(html_path))}[/blue]",
+                            f"[blue]{t('html_report_saved', path=html_path)}[/blue]",
                             quiet,
                         )
                 else:
@@ -257,13 +258,15 @@ def save_output(output_files, data, quiet=False):
                     html_path = export_html(
                         data, output_path, REPORT_TEMPLATE, METIS_VERSION
                     )
+                    from metis.i18n import t
                     print_console(
-                        f"[blue]HTML report saved to {escape(str(html_path))}[/blue]",
+                        f"[blue]{t('html_report_saved', path=html_path)}[/blue]",
                         quiet,
                     )
             except Exception as exc:  # pragma: no cover - defensive
+                from metis.i18n import t
                 logger.error("Failed to generate HTML report: %s", exc)
-                print_console("[red]Failed to generate HTML report.[/red]", quiet)
+                print_console(f"[red]{t('failed_to_generate_html')}[/red]", quiet)
             continue
 
         if suffix == ".sarif":
@@ -271,8 +274,9 @@ def save_output(output_files, data, quiet=False):
                 sarif_path, sarif_payload = export_sarif(
                     data, output_path, sarif_payload
                 )
+                from metis.i18n import t
                 print_console(
-                    f"[blue]SARIF report saved to {escape(str(sarif_path))}[/blue]",
+                    f"[blue]{t('sarif_report_saved', path=sarif_path)}[/blue]",
                     quiet,
                 )
             except Exception as exc:  # pragma: no cover - defensive
@@ -286,8 +290,9 @@ def save_output(output_files, data, quiet=False):
         if suffix == ".csv":
             try:
                 csv_path = export_csv(data, output_path)
+                from metis.i18n import t
                 print_console(
-                    f"[blue]CSV report saved to {escape(str(csv_path))}[/blue]",
+                    f"[blue]{t('csv_report_saved', path=csv_path)}[/blue]",
                     quiet,
                 )
             except Exception as exc:  # pragma: no cover - defensive
@@ -357,8 +362,10 @@ def sort_and_filter_reviews(
 def pretty_print_reviews(
     results, quiet=False, min_confidence=0.0, severity_filter=None
 ):
+    from metis.i18n import t
+    
     if not results or not results.get("reviews"):
-        print_console("[bold green]No security issues found![/bold green]", quiet)
+        print_console(f"[bold green]{t('no_issues_found')}![/bold green]", quiet)
         return
 
     for file_review in results.get("reviews", []):
@@ -370,20 +377,20 @@ def pretty_print_reviews(
             reviews = sort_and_filter_reviews(reviews, min_confidence, severity_filter)
 
         if reviews:
-            print_console(f"\n[bold blue]File: {escape(file)}[/bold blue]", quiet)
+            print_console(f"\n[bold blue]{t('file')}: {escape(file)}[/bold blue]", quiet)
             for idx, r in enumerate(reviews, 1):
                 print_console(
-                    f" [yellow]Identified issue {idx}:[/yellow] [bold]{escape(r.get('issue','-'))}[/bold]",
+                    f" [yellow]{t('issues_found', count=idx)}:[/yellow] [bold]{escape(r.get('issue','-'))}[/bold]",
                     quiet,
                 )
                 if r.get("code_snippet"):
                     print_console(
-                        f"    [cyan]Snippet:[/cyan] [dim]{r['code_snippet']}",
+                        f"    [cyan]{t('code_snippet')}:[/cyan] [dim]{r['code_snippet']}",
                         quiet,
                     )
                 if r.get("line_number"):
                     print_console(
-                        f"    [cyan]Line number:[/cyan] {r['line_number']}",
+                        f"    [cyan]{t('line')}:[/cyan] {r['line_number']}",
                         quiet,
                     )
                 if r.get("cwe"):
@@ -392,12 +399,12 @@ def pretty_print_reviews(
                     if match:
                         cwe_url = f"https://cwe.mitre.org/data/definitions/{match.group(1)}.html"
                         print_console(
-                            f"    [red]CWE:[/red] [link={cwe_url}]{escape(cwe_text)}[/link]",
+                            f"    [red]{t('cwe')}:[/red] [link={cwe_url}]{escape(cwe_text)}[/link]",
                             quiet,
                         )
                     else:
                         print_console(
-                            f"    [red]CWE:[/red] {escape(cwe_text)}",
+                            f"    [red]{t('cwe')}:[/red] {escape(cwe_text)}",
                             quiet,
                         )
                 if severity := r.get("severity"):
@@ -407,26 +414,32 @@ def pretty_print_reviews(
                         "High": "red",
                         "Critical": "magenta",
                     }.get(severity, "bright_black")
+                    severity_text = {
+                        "Low": t("severity_low"),
+                        "Medium": t("severity_medium"),
+                        "High": t("severity_high"),
+                        "Critical": t("severity_critical"),
+                    }.get(severity, severity)
                     print_console(
-                        f"    [bright_black]Severity:[/bright_black] [bold {severity_color}]{escape(severity)}[/bold {severity_color}]",
+                        f"    [bright_black]{t('severity')}:[/bright_black] [bold {severity_color}]{escape(severity_text)}[/bold {severity_color}]",
                         quiet,
                     )
                 if reasoning := r.get("reasoning"):
-                    print_console(f"    [white]Why:[/white] {escape(reasoning)}", quiet)
+                    print_console(f"    [white]{t('reasoning')}:[/white] {escape(reasoning)}", quiet)
                 if r.get("mitigation"):
                     print_console(
-                        f"    [green]Mitigation:[/green] {escape(r['mitigation'])}",
+                        f"    [green]{t('mitigation')}:[/green] {escape(r['mitigation'])}",
                         quiet,
                     )
                 if confidence := r.get("confidence"):
                     print_console(
-                        f"    [magenta]Confidence:[/magenta] {escape(str(confidence))}",
+                        f"    [magenta]{t('confidence')}:[/magenta] {escape(str(confidence))}",
                         quiet,
                     )
                 if any(r.get(field) for field in ("confidence", "severity", "cwe")):
                     print_console("", quiet)
         else:
-            print_console(f"[green]No issues in {escape(file)}[/green]", quiet)
+            print_console(f"[green]{t('no_issues_in_file', file=file)}[/green]", quiet)
 
 
 def build_flow_graph(results: dict) -> dict:

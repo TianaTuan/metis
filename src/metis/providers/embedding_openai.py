@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict
 
 from llama_index.embeddings.openai import (
@@ -12,6 +13,8 @@ from llama_index.embeddings.openai import (
 
 from metis.providers.embedding_base import EmbeddingProvider
 from metis.providers.embedding_registry import register_embedding_provider
+
+logger = logging.getLogger("metis.providers.embedding")
 
 _ALLOWED_OPENAI_EMBED_MODELS = {member.value for member in OpenAIEmbeddingModelType}
 
@@ -74,6 +77,10 @@ class OpenAICompatibleEmbeddingProvider(EmbeddingProvider):
         config_key: str,
     ):
         """构建 embedding 模型实例。"""
+        print("\n" + "="*50)
+        print("!!! HIT THE PROVIDER !!!")
+        print(f"Model: {model_name}")
+        print("="*50 + "\n")
         if not model_name:
             raise ValueError(f"Missing '{config_key}' in configuration")
 
@@ -89,14 +96,39 @@ class OpenAICompatibleEmbeddingProvider(EmbeddingProvider):
             params["api_base"] = self.base_url
         if self.default_headers:
             params["default_headers"] = self.default_headers
-        if extra_kwargs:
-            params.update(extra_kwargs)
+        
+        # 1. 确定最终要使用的安全 batch_size
+        final_batch_size = 20
+        user_batch_size = extra_kwargs.get("batch_size")
+        
+        if user_batch_size is not None:
+            if user_batch_size > 25:
+                logger.warning(f"batch_size {user_batch_size} 超过 API 限制 25，已自动调整为 20")
+                final_batch_size = 20
+            else:
+                final_batch_size = user_batch_size
+        
+        # 2. 实例化对象
+        # 注意：这里我们显式传入 batch_size
+        embed = OpenAIEmbedding(
+            model=model_name,
+            batch_size=final_batch_size, 
+            **extra_kwargs
+        )
+        
+        # 3. 【最关键的一步】强制覆盖属性
+        # 有些版本的 LlamaIndex 会从配置中覆盖这个值，手动赋值最稳妥
+        embed.batch_size = final_batch_size
 
-        embed = OpenAIEmbedding(**params)
+        # 4. 兼容性处理
         if model_name not in _ALLOWED_OPENAI_EMBED_MODELS:
             embed._query_engine = model_name
             embed._text_engine = model_name
             embed.model_name = model_name
+            
+        # 5. 打印确认（调试用，成功后可删除）
+        print(f"--- 确认：当前 Embedding 批处理大小已设为: {embed.batch_size} ---")
+        print(f"\n🚀 DEBUG: 正在运行修改后的代码！当前 batch_size 是: {embed.batch_size}\n")
         return embed
 
 

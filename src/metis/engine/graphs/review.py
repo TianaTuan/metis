@@ -251,6 +251,7 @@ def review_node_build_prompt(
     custom_prompt_text: str | None,
     custom_guidance_precedence: str,
     schema_prompt_section: str,
+    language: str = "zh_CN",
 ) -> ReviewState:
     system = build_review_system_prompt(
         language_prompts,
@@ -259,6 +260,7 @@ def review_node_build_prompt(
         custom_prompt_text,
         custom_guidance_precedence,
         schema_prompt_section,
+        language=language,
     )
     new_state: ReviewState = dict(state)
     new_state["system_prompt"] = system
@@ -316,6 +318,7 @@ class ReviewGraph:
         custom_guidance_precedence,
         llama_query_model,
         max_token_length,
+        language="zh_CN",
     ):
         self.llm_provider = llm_provider
         self.plugin_config = plugin_config
@@ -323,6 +326,7 @@ class ReviewGraph:
         self.custom_guidance_precedence = custom_guidance_precedence or ""
         self.llama_query_model = llama_query_model
         self.max_token_length = max_token_length
+        self.language = language
         self._schema_prompt_section = review_schema_prompt()
 
         self.report_prompt = self.plugin_config.get("general_prompts", {}).get(
@@ -400,6 +404,7 @@ class ReviewGraph:
             custom_prompt_text=self.custom_prompt_text,
             custom_guidance_precedence=self.custom_guidance_precedence,
             schema_prompt_section=self._schema_prompt_section,
+            language=self.language,
         )
         review = partial(
             review_node_llm,

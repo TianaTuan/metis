@@ -162,6 +162,7 @@ def build_review_system_prompt(
     custom_prompt_text,
     custom_guidance_precedence,
     schema_prompt_section,
+    language="zh_CN",
 ):
     """Compose the system prompt for a review in a single place."""
     base = (
@@ -177,6 +178,12 @@ def build_review_system_prompt(
         )
 
     base = base.replace(placeholder, schema_prompt_section)
+    
+    # 添加语言要求（如果语言是中文）
+    if language in ("zh_CN", "zh", "chinese"):
+        if "IMPORTANT: All your responses" not in base and "必须使用中文" not in base:
+            base += "\n\nIMPORTANT: All your responses (issue descriptions, reasoning, mitigation suggestions) must be in Chinese (Simplified). 所有文本字段（问题描述、原因分析、修复建议）必须使用简体中文。"
+    
     return apply_custom_guidance(
         base, custom_prompt_text, custom_guidance_precedence or ""
     )

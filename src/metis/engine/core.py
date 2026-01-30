@@ -152,6 +152,9 @@ class MetisEngine:
         # Call graph cache for enhanced RAG
         self._call_graph_cache = {}
         self._enable_call_graph = kwargs.get("enable_call_graph", True)
+        self.min_retrieval_score = kwargs.get("min_retrieval_score")
+        # Language setting for output
+        self._language = kwargs.get("language", "zh_CN")
 
     def _build_call_graph_cache(self, code_docs):
         """
@@ -213,6 +216,7 @@ class MetisEngine:
 
     def _get_review_graph(self):
         if self._review_graph is None:
+            language = getattr(self, "_language", "zh_CN")
             self._review_graph = ReviewGraph(
                 llm_provider=self.llm_provider,
                 plugin_config=self.plugin_config,
@@ -220,6 +224,7 @@ class MetisEngine:
                 custom_guidance_precedence=self.custom_guidance_precedence,
                 llama_query_model=self.llama_query_model,
                 max_token_length=self.max_token_length,
+                language=language,
             )
         return self._review_graph
 

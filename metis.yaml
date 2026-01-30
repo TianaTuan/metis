@@ -1,6 +1,6 @@
 metis_engine:
   max_token_length: 250000
-  max_workers: 10
+  max_workers: 1
   embed_dim: 3072
   hnsw_kwargs:
     hnsw_m: 16
@@ -28,6 +28,10 @@ llm_provider:
   model: "qwen-max"
   code_embedding_model: "text-embedding-v1"
   docs_embedding_model: "text-embedding-v1"
+  code_embedding_extra_kwargs:
+    batch_size: 5
+  docs_embedding_extra_kwargs:
+    batch_size: 5
 
 query:
   similarity_top_k: 5

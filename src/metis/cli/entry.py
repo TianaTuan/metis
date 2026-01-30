@@ -197,6 +197,13 @@ def main():
         exit(1)
     configure_logger(logger, args)
     runtime = load_runtime_config(enable_psql=(args.backend == "postgres"))
+    
+    # 设置语言（从配置或命令行参数）
+    from metis.i18n import set_language
+    language = runtime.get("language", "zh_CN")
+    if hasattr(args, "language") and args.language:
+        language = args.language
+    set_language(language)
 
     # Construct the correct provider from runtime config
     llm_provider_name = runtime.get("llm_provider_name", "openai")
@@ -279,6 +286,9 @@ def main():
         if metis_md.is_file():
             custom_prompt_text = read_file_content(str(metis_md))
 
+    # 获取语言设置（已在前面设置，这里确保传递给 engine）
+    if not runtime.get("language"):
+            runtime["language"] = "zh_CN"
     engine = MetisEngine(
         codebase_path=args.codebase_path,
         llm_provider=llm_provider,

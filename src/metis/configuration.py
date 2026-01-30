@@ -180,6 +180,9 @@ def load_runtime_config(config_path=None, enable_psql=False):
         "min_retrieval_score"
     )  # Optional: minimum relevance score for retrieval
 
+    # Language setting (default: zh_CN for Chinese)
+    runtime["language"] = cfg.get("language", "zh_CN")
+
     return runtime
 
 

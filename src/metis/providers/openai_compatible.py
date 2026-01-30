@@ -70,6 +70,7 @@ class OpenAICompatibleProvider(LLMProvider):
             raise ValueError(f"Missing '{config_key}' in configuration")
 
         params: Dict[str, Any] = {}
+        # 基础参数
         params["model"] = (
             model_name
             if model_name in _ALLOWED_OPENAI_EMBED_MODELS
@@ -81,15 +82,30 @@ class OpenAICompatibleProvider(LLMProvider):
             params["api_base"] = self.base_url
         if self.default_headers:
             params["default_headers"] = self.default_headers
-        if extra_kwargs:
-            params.update(extra_kwargs)
-
+        
+        # 1. 实例化时，去掉那个会报错的 batch_size
         embed = OpenAIEmbedding(**params)
+        
+        # 2. 【核心修复】强行注入批量控制属性
+        # safe_batch_size 设为 10，确保绝对不超标
+        safe_batch_size = 10
+        
+        # 使用 object.__setattr__ 绕过 Pydantic 的只读/字段检查
+        # 我们同时设置三个可能的属性名，确保彻底堵死漏洞
+        object.__setattr__(embed, "batch_size", safe_batch_size)
+        object.__setattr__(embed, "embed_batch_size", safe_batch_size)
+        if hasattr(embed, "_callback_manager"): # 顺便确保回调不会导致并发问题
+            object.__setattr__(embed, "num_workers", 1)
+
+        # 3. 兼容性逻辑
         if model_name not in _ALLOWED_OPENAI_EMBED_MODELS:
             embed._query_engine = model_name
             embed._text_engine = model_name
             embed.model_name = model_name
+
+        print(f"\n🚀 [Final Fix] 属性注入成功: batch_size={getattr(embed, 'batch_size', 'Error')}")
         return embed
+
 
     def get_chat_model(self, model: str | None = None, **kwargs):
         model_name = model or self.query_model

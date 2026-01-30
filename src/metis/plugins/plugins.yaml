@@ -12,12 +12,14 @@ general_prompts:
     Include any data flows, function calls, or dependencies that could impact security.
     Make sure you flag any function input that is externally controlled.
     FILE: {file_path}
+    IMPORTANT: Please respond in Chinese (Simplified).
   security_review_report: |-
     3. How to Report
         - List all identified security issues in a JSON array.
         - Each element must strictly follow this structure:
           [[REVIEW_SCHEMA_FIELDS]]
         - IMPORTANT: If no identified security issues are found, return: {\"reviews\": []}
+        - IMPORTANT: All text fields (issue, reasoning, mitigation) must be in Chinese (Simplified).
 
 plugins:
   c:
